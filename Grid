@@ -1,0 +1,214 @@
+using UnityEngine;
+using System.Collections.Generic;
+using System.Linq;
+
+public class Grid : MonoBehaviour
+{
+    public float rockNoiseScale = .05f;
+    public float rockDensity = .5f;
+    public Material terrainMaterial;
+    //public GameObject terrainObject;
+
+    public Material edgeMaterial;
+    public Material lavaMaterial;
+    //public float lavaLevel = .4f;
+    public float scale = .1f;
+  //public TerrainClass terrain;
+    public GameObject[] rockPrefabs;
+    public GameObject edgeObj;
+
+    //public GameObject Land;
+    //public Terrain terrain; // Define terrain here
+
+    Cell[,] grid;
+
+
+    public Texture2D heightMapTexture;
+    public float heightScale = 10f;
+    public float noiseScale = 1f;
+    public int octaves = 4;
+    public float persistence = 0.5f;
+    public float lacunarity = 2f;
+    public Vector2 offset = Vector2.zero;
+    public float edgeHeight = 20f;
+    public float shoreHeight = 5f;
+    public float lavaLevel = 0.3f;
+    public int size = 100;
+    public float cellSize = 1f;
+    public int seed = 0;
+    public float[,] heightmap;
+
+    void Start()
+    {
+        float[,] heightMap = new float[size, size];
+
+        // Load height map texture and convert it to an array of height values
+        if (heightMapTexture != null)
+        {
+            Color[] colors = heightMapTexture.GetPixels();
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float heightValue = colors[y * size + x].grayscale;
+                    heightValue *= heightScale;
+                    heightMap[x, y] = heightValue;
+                }
+            }
+        }
+        else
+        {
+            Debug.LogError("Height map texture not set!");
+        }
+
+
+        
+        // Other code..
+
+        // Generate the falloff map
+        float[,] falloffMap = FalloffGenerate(size);
+
+        // Generate the noise map
+        float[,] noiseMap = NoiseGenerate(size, size, seed, noiseScale, octaves, persistence, lacunarity, offset);
+
+        // Combine the noise map and falloff map to create the final height map
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                noiseMap[x, y] = Mathf.Clamp01(noiseMap[x, y] - falloffMap[x, y]);
+            }
+        }
+
+
+
+        // Create cells and assign them to the grid
+        grid = new Cell[size, size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                bool isLava = noiseMap[x, y] < lavaLevel;
+                Cell newCell = new Cell(x, y, isLava, noiseMap[x, y] );
+
+                // Add the new Cell to the array of Cells
+                grid[x, y] = newCell;
+
+                // Connect the new Cell to its neighboring Cells
+                newCell.ConnectNeighbors(grid);
+            }
+        }
+
+
+
+        // Create a new instance of the TerrainClass and generate the terrain
+        TerrainClass terrain = new TerrainClass(size, size, cellSize, heightMap, noiseMap, grid, edgeHeight, shoreHeight);
+        terrain.Generate();
+
+    }
+
+    public static float[,] FalloffGenerate(int size)
+    {
+        float[,] map = new float[size, size];
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float xPos = x / (float)size * 2 - 1;
+                float yPos = y / (float)size * 2 - 1;
+
+                float value = Mathf.Max(Mathf.Abs(xPos), Mathf.Abs(yPos));
+                map[x, y] = Evaluate(value);
+            }
+        }
+
+        return map;
+    }
+
+    private static float Evaluate(float value)
+    {
+        float a = 3f;
+        float b = 2.2f;
+
+        return Mathf.Pow(value, a) / (Mathf.Pow(value, a) + Mathf.Pow(b - b * value, a));
+    }
+
+
+    public static float[,] NoiseGenerate(int width, int height, int seed, float scale, int octaves, float persistence, float lacunarity, Vector2 offset)
+    {
+        float[,] noiseMap = new float[width, height];
+
+        System.Random prng = new System.Random(seed);
+        Vector2[] octaveOffsets = new Vector2[octaves];
+
+        float maxPossibleHeight = 0;
+        float amplitude = 1;
+        float frequency = 1;
+
+        for (int i = 0; i < octaves; i++)
+        {
+            float offsetX = prng.Next(-100000, 100000) + offset.x;
+            float offsetY = prng.Next(-100000, 100000) + offset.y;
+            octaveOffsets[i] = new Vector2(offsetX, offsetY);
+
+            maxPossibleHeight += amplitude;
+            amplitude *= persistence;
+        }
+
+        if (scale <= 0)
+        {
+            scale = 0.0001f;
+        }
+
+        float maxNoiseHeight = float.MinValue;
+        float minNoiseHeight = float.MaxValue;
+
+        float halfWidth = width / 2f;
+        float halfHeight = height / 2f;
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                amplitude = 1;
+                frequency = 1;
+                float noiseHeight = 0;
+
+                for (int i = 0; i < octaves; i++)
+                {
+                    float sampleX = (x - halfWidth + octaveOffsets[i].x) / scale * frequency;
+                    float sampleY = (y - halfHeight + octaveOffsets[i].y) / scale * frequency;
+
+                    float perlinValue = Mathf.PerlinNoise(sampleX, sampleY) * 2 - 1;
+                    noiseHeight += perlinValue * amplitude;
+
+                    amplitude *= persistence;
+                    frequency *= lacunarity;
+                }
+
+                if (noiseHeight > maxNoiseHeight)
+                {
+                    maxNoiseHeight = noiseHeight;
+                }
+                else if (noiseHeight < minNoiseHeight)
+                {
+                    minNoiseHeight = noiseHeight;
+                }
+
+                noiseMap[x, y] = noiseHeight;
+            }
+        }
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                noiseMap[x, y] = Mathf.InverseLerp(minNoiseHeight, maxNoiseHeight, noiseMap[x, y]);
+            }
+        }
+
+        return noiseMap;
+    }
+
+}
